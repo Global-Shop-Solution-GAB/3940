@@ -1,0 +1,240 @@
+Program.Sub.ScreenSU.Start
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+
+Variable.UDT.uReport.Define("sJob",String,Job)
+Variable.UDT.uReport.Define("sPart",String,Part)
+Variable.UDT.uReport.Define("sSuffix",String,SFX)
+Variable.UDT.uReport.Define("iQtyComp",Float,PCSCOMPL)
+Variable.UDT.uReport.Define("iQtyOrder",Float,PCSTOProd)
+Variable.UDT.uReport.Define("sDescription",String,Description)
+Variable.UDT.uReport.Define("sWorkCenter",String)
+Variable.UDT.uReport.Define("sWorkGroup",String)
+Variable.UDT.uReport.Define("sDept",String)
+Variable.UDT.uReport.Define("sSeq",String)
+Variable.UDT.uReport.Define("sLMO",String)
+Variable.UDT.uReport.Define("iDateDiff",Long)
+Variable.UDT.uReport.Define("iBIRunID",Long)
+Variable.UDT.uReport.Define("dDateDue",Date,DueDate)
+Variable.UDT.uReport.Define("dDateEnd",Date,SchedEnd)
+Variable.UDT.uReport.Define("iQtyRemain",Float,PCSRemain)
+Variable.uGlobal.uReport.Declare("uReport")
+Variable.Global.iBIRunID.Declare(Long,0)
+Variable.Global.iBILogID.Declare(Long,0)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+'Created for Qual-Fab by SKT
+'06/25/15
+'This is a variation of the APS 770 report that has the report grouped by Workgroup
+'then individual Workcenters that are not part of a workgroup.
+'If the next open Sequence is material display the next open labor sequence.
+'Exclude the department OVHD
+
+V.Local.sSql.Declare(String)
+
+F.ODBC.Connection!conx.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+
+V.Local.sSql.Set("Delete From GCG_3940_QUA_APS770")
+F.ODBC.Connection!conx.Execute(V.Local.sSql)
+
+V.Local.sSql.Set("Select Job, SFX, Part, Description, Left (dueDate, 10) as DueDate, Left (SchedEnd, 10) as SchedEnd, PCSTOProd, PCSCompl, PCSRemain From ApSV3_JBMaster Where SchedEnd > DueDate")
+
+F.ODBC.Connection!conx.OpenLocalRecordsetRO("rst",V.Local.sSql)
+
+F.Intrinsic.Control.If(V.ODBC.conx!rst.EOF,=,False)
+
+	F.Intrinsic.Variable.LoadUDTFromRecordset("conx","rst","v.uGlobal.uReport",False)
+	F.Intrinsic.Control.CallSub(Details)
+F.Intrinsic.Control.Else
+	F.Intrinsic.UI.Msgbox("No open Jobs Found!","Error")
+F.Intrinsic.Control.EndIf
+
+F.ODBC.conx!rst.Close
+
+F.Intrinsic.Control.CallSub(Callbi)
+F.Intrinsic.Control.CallSub(Unload)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3940_QUA_APS700.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Main.End
+
+Program.Sub.Details.Start
+F.Intrinsic.Control.SetErrorHandler("Details_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.sSql.Declare(String)
+V.Local.sOrdinal.Declare(String)
+V.Local.iCount.Declare(Long)
+
+F.Global.BI.GetRunID(V.Global.iBIRunID)
+F.Global.BI.StartLogging(V.Global.iBIRunID,-1,-1,"",V.Global.iBILogID)
+
+F.Intrinsic.Control.For(V.Local.iCount,0,V.uGlobal.uReport.UBound,1)
+
+	F.Intrinsic.String.Build("Select Top 1(Seq) as Seq, SeqType, SeqRes from APSV3_JBLines where Job = '{0}' and SFX = '{1}' and SeqType In ('1', '3') Order by Seq",V.uGlobal.uReport(v.Local.iCount)!sJob,V.uGlobal.uReport(v.Local.iCount)!sSuffix,V.Local.sSql)
+	F.ODBC.Connection!conx.OpenLocalRecordsetRO("rst",V.Local.sSql)
+
+	F.Intrinsic.Control.If(V.ODBC.conx!rst.EOF,=,False)
+		V.uGlobal.uReport(v.Local.iCount)!sSeq.Set(V.ODBC.conx!rst.FieldValTrim!Seq)
+		V.uGlobal.uReport(v.Local.iCount)!sLMO.Set(V.ODBC.conx!rst.FieldValTrim!SeqType)
+		V.uGlobal.uReport(v.Local.iCount)!sWorkCenter.Set(V.ODBC.conx!rst.FieldValTrim!SeqRes)
+
+		F.Intrinsic.Control.If(V.uGlobal.uReport(v.Local.iCount)!sWorkCenter,=,"")
+			V.Local.sSql.Set("Select Workgroup from Workgroup_Line where Workcenter IS NULL")
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("Select WorkGroup from WorkGroup_Line where Workcenter = '{0}'",V.uGlobal.uReport(v.Local.iCount)!sWorkCenter,V.Local.sSql)
+		F.Intrinsic.Control.EndIf
+	'--------------------------------------------------------------------------------------------------------------
+		F.ODBC.Connection!conx.OpenLocalRecordsetRO("rstWC",V.Local.sSql)
+
+		F.Intrinsic.Control.If(V.ODBC.conx!rstWC.EOF,=,False)
+			V.uGlobal.uReport(v.Local.iCount)!sWorkGroup.Set(V.ODBC.conx!rstWC.FieldValTrim!WorkGroup)
+		F.Intrinsic.Control.EndIf
+
+		F.ODBC.conx!rstWC.Close
+
+	'--------------------------------------------------------------------------------------------------------------
+		F.Intrinsic.Control.If(V.uGlobal.uReport(v.Local.iCount)!sWorkCenter,=,"")
+			V.Local.sSql.Set("Select WC_Dept from Workcenters where Machine IS NULL")
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("Select WC_Dept from WorkCenters where Machine = '{0}'",V.uGlobal.uReport(v.Local.iCount)!sWorkCenter,V.Local.sSql)
+		F.Intrinsic.Control.EndIf
+
+	'--------------------------------------------------------------------------------------------------------------
+
+		F.ODBC.Connection!conx.OpenLocalRecordsetRO("rstD",V.Local.sSql)
+
+		F.Intrinsic.Control.If(V.ODBC.conx!rstD.EOF,=,False)
+			V.uGlobal.uReport(v.Local.iCount)!sDept.Set(V.ODBC.conx!rstD.FieldValTrim!WC_Dept)
+		F.Intrinsic.Control.EndIf
+
+		F.ODBC.conx!rstD.Close
+
+		F.Intrinsic.Date.DateDiff("d",V.uGlobal.uReport(v.Local.iCount)!dDateEnd,V.uGlobal.uReport(v.Local.iCount)!dDateDue,V.uGlobal.uReport(v.Local.iCount)!iDateDiff)
+		F.Intrinsic.Math.Abs(V.uGlobal.uReport(V.Local.iCount)!iDateDiff,V.uGlobal.uReport(V.Local.iCount)!iDateDiff)
+
+	F.Intrinsic.Control.Else
+		'Need to delete the ordinal
+		F.Intrinsic.Control.If(V.Local.sOrdinal,=,"")
+			V.Local.sOrdinal.Set(V.Local.iCount)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0}*!*{1}",V.Local.sOrdinal,V.Local.iCount,V.Local.sOrdinal)
+		F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.EndIf
+
+	F.ODBC.conx!rst.Close
+'--------------------------------------------------------------------------------------------------------------
+
+F.Intrinsic.Control.Next(V.Local.iCount)
+
+F.Intrinsic.Variable.UDTFlagOrdinal(v.uGlobal.uReport,True,v.Local.sOrdinal)
+F.Intrinsic.Variable.UDTMultiFlag(V.uGlobal.uReport!sDept,"OVHD")
+F.Intrinsic.Variable.UDTMultiFlag(V.uGlobal.uReport!iDateDiff,0.0000)
+F.Intrinsic.Variable.UDTDeleteFlagged(V.uGlobal.uReport)
+F.Intrinsic.Variable.UDTMultiQuickSort(V.uGlobal.uReport!sDept,False,V.uGlobal.uReport!sWorkGroup,False,V.uGlobal.uReport!sWorkCenter,False,V.uGlobal.uReport!iDateDiff,True)
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!dDateEnd,"Date_End")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!dDateDue,"Date_Due")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!iBIRunID,"BIRunID")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!iDateDiff,"Date_Diff")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!iQtyComp,"Qty_Complete")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!iQtyOrder,"Qty_Order")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!sPart,"Part")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!sDescription,"Description")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!sJob,"Job")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!sDept,"Dept")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!sLMO,"LMO")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!sSeq,"Seq")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!sSuffix,"Suffix")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!sWorkCenter,"WorkCenter")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!sWorkGroup,"WorkGroup")
+F.Intrinsic.Variable.SetUDTFieldReference(V.uGlobal.uReport!iQtyRemain,"")
+F.Intrinsic.Variable.UDTSetMemberValue(V.uGlobal.uReport!iBIRunID,V.Global.iBIRunID)
+
+V.Local.sSql.set("Select * From GCG_3940_QUA_APS770")
+F.ODBC.Connection!conx.OpenLocalRecordsetRW("rst",V.Local.sSql)
+F.Intrinsic.Variable.SaveUDTToRecordSet("conx","rst","v.uGlobal.uReport")
+F.ODBC.conx!rst.Close
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Details_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3940_QUA_APS700.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Details.End
+
+Program.Sub.CallBI.Start
+F.Intrinsic.Control.SetErrorHandler("CallBI_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.sParam.Declare(String)
+V.Local.sAttach.Declare(String)
+V.Local.sRet.Declare(String)
+V.Local.sVal.Declare(Long)
+
+V.Local.sRet.Set(V.Ambient.Date)
+F.Intrinsic.String.Replace(V.Local.sRet,"/","_",V.Local.sRet)
+F.Intrinsic.String.Concat(V.Caller.GlobalDir,"\Task Sch Rpt\DaysLate_",V.Local.sRet,".pdf",V.Local.sAttach)
+
+F.Global.BI.StopLogging(V.Global.iBILogID)
+V.Local.sParam.Set("BIRunID")
+V.Local.sVal.Set(V.Global.iBIRunID)
+F.Global.BI.RunReportPreProcessor(V.Global.iBIRunID,V.Global.iBILogID,V.Local.sParam,V.Local.sVal,"GCG_3940_QUA_APS770.rpt",4,True,"",-1,"",0,V.Local.sAttach,"",V.Global.iBIRunID)
+
+F.Global.Messaging.CreateEMMessage("reports@qual-fab.com","Days Late","reports@qual-fab.com","Task Scheduler","Days Late - Task Scheduler","See Attachement for the Days Late Report",V.local.sAttach,False)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("CallBI_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3940_QUA_APS700.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.CallSub(Unload)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.CallBI.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.SetErrorHandler("Unload_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+
+F.ODBC.Connection!conx.Close
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Unload_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_3940_QUA_APS700.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Unload.End
+
+
